@@ -11,73 +11,42 @@ import (
 	"github.com/hajimehoshi/ebiten/v2/vector"
 )
 
-// Colors
 var (
-	localColor  = color.RGBA{0, 255, 0, 255}   // green
-	remoteColor = color.RGBA{255, 0, 0, 255}   // red
-	coinColor   = color.RGBA{255, 215, 0, 255} // gold
-	bgColor     = color.RGBA{35, 35, 35, 255}
+	localColor  = color.RGBA{0, 200, 0, 255}
+	remoteColor = color.RGBA{200, 0, 0, 255}
+	coinColor   = color.RGBA{255, 215, 0, 255}
+	bgColor     = color.RGBA{30, 30, 30, 255}
 )
 
-const playerSize float32 = 25
+const playerSize float32 = 26
+const coinRadius float32 = 10
 
-func DrawWorld(screen *ebiten.Image, state WorldSnapshot, localID common.PlayerID) {
-	// fill background
+func DrawWorld(screen *ebiten.Image, state WorldSnapshot, localID common.PlayerID, localMask uint8) {
 	screen.Fill(bgColor)
 
-	// --- Draw coins ---
 	for _, c := range state.Coins {
-		vector.FillCircle(
-			screen,
-			float32(c.X),
-			float32(c.Y),
-			10,
-			coinColor,
-			true,
-		)
+		vector.FillCircle(screen, c.X, c.Y, coinRadius, coinColor, true)
 	}
 
-	// --- Draw players ---
+	localScore := uint16(0)
+	otherScore := uint16(0)
 	for _, p := range state.Players {
 		if p.ID == localID {
 			drawSquare(screen, p.X, p.Y, localColor)
-		} else {
-			drawSquare(screen, p.X, p.Y, remoteColor)
-		}
-	}
-
-	// --- UI: Scores ---
-	localScore := 0
-	otherScore := 0
-
-	for _, p := range state.Players {
-		if p.ID == localID {
 			localScore = p.Score
 		} else {
+			drawSquare(screen, p.X, p.Y, remoteColor)
 			otherScore = p.Score
 		}
 	}
 
-	scoreText := fmt.Sprintf(
-		"You (Green): %d\nOpponent (Red): %d\nPlayers: %d  Coins: %d",
-		localScore,
-		otherScore,
-		len(state.Players),
-		len(state.Coins),
-	)
-
-	ebitenutil.DebugPrint(screen, scoreText)
+	ebitenutil.DebugPrint(screen, fmt.Sprintf(
+		"You (Green): %d\nOpponent (Red): %d\nPlayers: %d   Coins: %d",
+		localScore, otherScore, len(state.Players), len(state.Coins),
+	))
 }
 
 func drawSquare(screen *ebiten.Image, x, y float32, col color.Color) {
 	half := playerSize / 2
-	vector.FillRect(
-		screen,
-		x-half,
-		y-half,
-		playerSize,
-		playerSize,
-		col,
-		true,
-	)
+	vector.FillRect(screen, x-half, y-half, playerSize, playerSize, col, true)
 }

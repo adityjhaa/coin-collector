@@ -12,7 +12,7 @@ func main() {
 	game := client.NewGame()
 
 	if err := game.Init(); err != nil {
-		log.Fatal("Failed to initialize client:", err)
+		log.Fatal("failed client init:", err)
 	}
 
 	ebiten.SetWindowSize(800, 600)

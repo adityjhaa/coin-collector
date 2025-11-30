@@ -1,12 +1,13 @@
 package client
 
 import (
-	"coin-collector/common"
 	"encoding/binary"
+	"fmt"
 	"log"
-	"math"
-	"math/rand"
 	"net"
+	"time"
+
+	"coin-collector/common"
 )
 
 type Network struct {
@@ -14,12 +15,14 @@ type Network struct {
 	server   *net.UDPAddr
 	PlayerID common.PlayerID
 
-	StateChan chan []byte // raw server world state packets
+	StateChan chan []byte
+	closed    chan struct{}
 }
 
 func NewNetwork() *Network {
 	return &Network{
-		StateChan: make(chan []byte, 32),
+		StateChan: make(chan []byte, 64),
+		closed:    make(chan struct{}),
 	}
 }
 
@@ -35,72 +38,77 @@ func (n *Network) Connect() error {
 		return err
 	}
 	n.conn = conn
+	n.conn.SetReadDeadline(time.Time{})
 
-	// Send CONNECT
-	n.conn.Write([]byte{common.MsgConnect})
-
-	// Wait for WELCOME
-	buf := make([]byte, 8)
-	for {
-		nBytes, _, err := n.conn.ReadFromUDP(buf)
-		if err != nil {
-			continue
-		}
-
-		if nBytes >= 2 && buf[0] == common.MsgConnect {
-			n.PlayerID = common.PlayerID(buf[1])
-			break
-		}
+	if _, err := n.conn.Write([]byte{byte(common.MsgConnect)}); err != nil {
+		return err
 	}
 
-	log.Println("Connected. PlayerID =", n.PlayerID)
+	buf := make([]byte, 64)
+	n.conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+	nBytes, _, err := n.conn.ReadFromUDP(buf)
+	if err != nil {
+		return err
+	}
+	n.conn.SetReadDeadline(time.Time{})
 
-	// Send SPAWN
-	x := rand.Float32() * 800
-	y := rand.Float32() * 600
+	if nBytes >= 3 && buf[0] == byte(common.MsgWelcome) {
+		id := common.PlayerID(binary.LittleEndian.Uint16(buf[1:3]))
+		n.PlayerID = id
+		log.Println("Received WELCOME id=", id)
+	} else {
+		return fmt.Errorf("invalid WELCOME packet")
+	}
 
-	spawn := make([]byte, 1+4+4)
-	spawn[0] = common.MsgSpawn
-	binary.LittleEndian.PutUint32(spawn[1:5], math.Float32bits(x))
-	binary.LittleEndian.PutUint32(spawn[5:9], math.Float32bits(y))
-
-	n.conn.Write(spawn)
-
-	// Start async listener
 	go n.listenLoop()
-
 	return nil
 }
 
 func (n *Network) listenLoop() {
-	buf := make([]byte, 2048)
-
+	buf := make([]byte, 4096)
 	for {
 		nBytes, _, err := n.conn.ReadFromUDP(buf)
 		if err != nil {
+			select {
+			case <-n.closed:
+				return
+			default:
+			}
 			continue
 		}
 		if nBytes == 0 {
 			continue
 		}
-
-		msgType := buf[0]
-
-		if msgType == common.MsgState {
-			// push raw world state packet
-			data := make([]byte, nBytes)
-			copy(data, buf[:nBytes])
-			n.StateChan <- data
+		if buf[0] == byte(common.MsgState) {
+			packet := make([]byte, nBytes)
+			copy(packet, buf[:nBytes])
+			select {
+			case n.StateChan <- packet:
+			default:
+				select {
+				case <-n.StateChan:
+				default:
+				}
+				select {
+				case n.StateChan <- packet:
+				default:
+				}
+			}
 		}
 	}
 }
 
 func (n *Network) SendInput(mask uint8) {
-	pkt := make([]byte, 1+2+1) // type + playerID + mask
-	pkt[0] = common.MsgInput
+	pkt := make([]byte, 1+2+1)
+	pkt[0] = byte(common.MsgInput)
 	binary.LittleEndian.PutUint16(pkt[1:3], uint16(n.PlayerID))
 	pkt[3] = mask
+	_, _ = n.conn.Write(pkt)
+}
 
-	n.conn.Write(pkt)
-
+func (n *Network) Close() {
+	close(n.closed)
+	if n.conn != nil {
+		_ = n.conn.Close()
+	}
 }

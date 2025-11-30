@@ -1,6 +1,8 @@
 package client
 
-const InterpDelayMs = 200 // matches server artificial latency
+import "sort"
+
+const InterpDelayMs = 200
 const MaxSnapshots = 64
 
 type Interpolator struct {
@@ -8,82 +10,74 @@ type Interpolator struct {
 }
 
 func NewInterpolator() *Interpolator {
-	return &Interpolator{
-		Snapshots: make([]WorldSnapshot, 0, MaxSnapshots),
-	}
+	return &Interpolator{Snapshots: make([]WorldSnapshot, 0, MaxSnapshots)}
 }
 
-func (i *Interpolator) AddSnapshot(s WorldSnapshot) {
-	if len(i.Snapshots) >= MaxSnapshots {
-		copy(i.Snapshots, i.Snapshots[1:])
-		i.Snapshots = i.Snapshots[:MaxSnapshots-1]
+func (it *Interpolator) AddSnapshot(s WorldSnapshot) {
+	if len(it.Snapshots) >= MaxSnapshots {
+		copy(it.Snapshots, it.Snapshots[1:])
+		it.Snapshots = it.Snapshots[:MaxSnapshots-1]
 	}
-
-	i.Snapshots = append(i.Snapshots, s)
+	it.Snapshots = append(it.Snapshots, s)
+	sort.Slice(it.Snapshots, func(i, j int) bool {
+		return it.Snapshots[i].Timestamp < it.Snapshots[j].Timestamp
+	})
 }
 
-func (i *Interpolator) GetRenderState() WorldSnapshot {
-	targetTime := NowMs() - InterpDelayMs
-
-	if len(i.Snapshots) < 2 {
-		// not enough information yet
+func (it *Interpolator) GetRenderState() WorldSnapshot {
+	if len(it.Snapshots) == 0 {
 		return WorldSnapshot{}
 	}
+	target := NowMs() - InterpDelayMs
 
-	// find snapshots surrounding targetTime
-	var older, newer WorldSnapshot
-	found := false
+	if len(it.Snapshots) == 1 {
+		return it.Snapshots[0]
+	}
 
-	for idx := len(i.Snapshots) - 1; idx >= 0; idx-- {
-		if i.Snapshots[idx].Timestamp <= targetTime {
-			older = i.Snapshots[idx]
-
-			if idx < len(i.Snapshots)-1 {
-				newer = i.Snapshots[idx+1]
+	var older, newer *WorldSnapshot
+	for i := len(it.Snapshots) - 1; i >= 0; i-- {
+		if it.Snapshots[i].Timestamp <= target {
+			older = &it.Snapshots[i]
+			if i+1 < len(it.Snapshots) {
+				newer = &it.Snapshots[i+1]
 			} else {
-				newer = older
+				newer = &it.Snapshots[i]
 			}
-
-			found = true
 			break
 		}
 	}
 
-	if !found {
-		// all snapshots newer — use the oldest
-		return i.Snapshots[0]
+	if older == nil {
+		return it.Snapshots[0]
 	}
 
-	// interpolate factor
+	if newer == nil || older.Timestamp == newer.Timestamp {
+		return *older
+	}
+
 	t0 := float32(older.Timestamp)
 	t1 := float32(newer.Timestamp)
-	tf := float32(targetTime)
-
-	var factor float32 = 0
+	tf := float32(target)
+	var f float32
 	if t1 > t0 {
-		factor = (tf - t0) / (t1 - t0)
+		f = (tf - t0) / (t1 - t0)
+	} else {
+		f = 0
 	}
 
-	// interpolate players
-	result := older
-	result.Timestamp = targetTime
+	out := *older
+	out.Timestamp = target
 
-	for pIdx := range result.Players {
-		id := result.Players[pIdx].ID
-
-		// find same player in newer
+	for i := range out.Players {
+		id := out.Players[i].ID
 		for _, np := range newer.Players {
 			if np.ID == id {
-				ox, oy := result.Players[pIdx].X, result.Players[pIdx].Y
-				nx, ny := np.X, np.Y
-
-				result.Players[pIdx].X = ox + (nx-ox)*factor
-				result.Players[pIdx].Y = oy + (ny-oy)*factor
+				out.Players[i].X = out.Players[i].X + (np.X-out.Players[i].X)*f
+				out.Players[i].Y = out.Players[i].Y + (np.Y-out.Players[i].Y)*f
+				out.Players[i].Score = np.Score
 			}
 		}
 	}
 
-	// coins are static until next tick → no interpolation needed
-
-	return result
+	return out
 }

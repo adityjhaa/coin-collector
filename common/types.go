@@ -2,29 +2,20 @@ package common
 
 import "net"
 
-type PlayerID int
+type PlayerID uint16
 
 type Player struct {
 	ID        PlayerID
-	X, Y      float64
-	Score     int
+	X, Y      float32
+	Score     uint16
 	Addr      *net.UDPAddr
 	LastInput uint8
+	Spawned   bool
+	LastHeard int64
 }
 
 type Coin struct {
 	ID int
-	X  float64
-	Y  float64
-}
-
-type WorldState struct {
-	Players []PlayerState
-	Coins   []Coin
-}
-
-type PlayerState struct {
-	ID    PlayerID
-	X, Y  float64
-	Score int
+	X  float32
+	Y  float32
 }

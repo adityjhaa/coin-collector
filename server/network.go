@@ -1,27 +1,24 @@
 package server
 
 import (
-	"coin-collector/common"
 	"encoding/binary"
 	"log"
-	"math"
 	"net"
 	"time"
+
+	"coin-collector/common"
 )
 
-type Server struct {
-	conn          *net.UDPConn
-	players       map[common.PlayerID]*common.Player
-	coins         []common.Coin
-	lastCoinSpawn time.Time
+type netUDPWrapper struct {
+	conn *net.UDPConn
 }
 
-func NewServer() *Server {
-	return &Server{
-		players:       make(map[common.PlayerID]*common.Player),
-		coins:         make([]common.Coin, 0),
-		lastCoinSpawn: time.Now(),
-	}
+func (w *netUDPWrapper) WriteToUDP(b []byte, addr *net.UDPAddr) (int, error) {
+	return w.conn.WriteToUDP(b, addr)
+}
+
+func (w *netUDPWrapper) ReadFromUDP(b []byte) (int, *net.UDPAddr, error) {
+	return w.conn.ReadFromUDP(b)
 }
 
 func (s *Server) StartNetwork() error {
@@ -29,100 +26,76 @@ func (s *Server) StartNetwork() error {
 	if err != nil {
 		return err
 	}
-
-	s.conn, err = net.ListenUDP("udp", addr)
+	rawConn, err := net.ListenUDP("udp", addr)
 	if err != nil {
 		return err
 	}
-
-	log.Println("Server listening on", common.ServerPort)
+	s.conn = &netUDPWrapper{conn: rawConn}
 
 	go s.listenLoop()
-
 	return nil
 }
 
 func (s *Server) listenLoop() {
-	buf := make([]byte, 1024)
-
+	buf := make([]byte, 2048)
 	for {
 		n, addr, err := s.conn.ReadFromUDP(buf)
 		if err != nil {
-			log.Println("Read error:", err)
+			log.Println("read err:", err)
 			continue
 		}
-
-		time.Sleep(200 * time.Millisecond)
-
 		if n == 0 {
 			continue
 		}
+
 		msgType := buf[0]
-
 		switch msgType {
-
 		case common.MsgConnect:
 			id := s.AddPlayer(addr)
-			s.sendWelcome(addr, id)
-			log.Println("Player connected:", id, addr)
-
-		case common.MsgSpawn:
-			s.handleSpawn(addr, buf[:n])
+			b := make([]byte, 1+2)
+			b[0] = byte(common.MsgWelcome)
+			binary.LittleEndian.PutUint16(b[1:3], uint16(id))
+			go s.delayedSend(b, addr)
+			log.Println("CONNECT from", addr, "-> id", id)
 
 		case common.MsgInput:
-			s.handleInput(addr, buf[:n])
+			if n < 1+2+1 {
+				continue
+			}
+			id := common.PlayerID(binary.LittleEndian.Uint16(buf[1:3]))
+			mask := buf[3]
+			s.lock.Lock()
+			if p, ok := s.players[id]; ok {
+				p.LastHeard = NowMs()
+				p.LastInput = mask
+			}
+			s.lock.Unlock()
+
+		default:
 		}
 	}
 }
 
-func (s *Server) sendWelcome(addr *net.UDPAddr, id common.PlayerID) {
-	data := []byte{
-		common.MsgConnect,
-		byte(id),
+func (s *Server) delayedSend(data []byte, addr *net.UDPAddr) {
+	lat := time.Duration(common.SimulatedLatencyMs) * time.Millisecond
+	time.Sleep(lat)
+	_, err := s.conn.WriteToUDP(data, addr)
+	if err != nil {
+		log.Println("delayed send err:", err)
 	}
-	s.conn.WriteToUDP(data, addr)
 }
 
-func (s *Server) handleSpawn(addr *net.UDPAddr, packet []byte) {
-	pid := s.playerIDFromAddr(addr)
-	if pid == 0 {
-		return
-	}
+func (s *Server) broadcastState(state []byte) {
+	s.lock.RLock()
+	defer s.lock.RUnlock()
 
-	x := math.Float32frombits(binary.LittleEndian.Uint32(packet[1:5]))
-	y := math.Float32frombits(binary.LittleEndian.Uint32(packet[5:9]))
-
-	s.SetPlayerSpawn(pid, x, y)
-	log.Println("Player", pid, "spawned at", x, y)
-}
-
-func (s *Server) handleInput(addr *net.UDPAddr, packet []byte) {
-    if len(packet) < 4 {
-        return
-    }
-
-    pid := common.PlayerID(binary.LittleEndian.Uint16(packet[1:3]))
-    mask := packet[3]
-
-    p, ok := s.players[pid]
-    if !ok { return }
-
-    p.LastInput = mask
-}
-
-
-func (s *Server) Broadcast(data []byte) {
 	for _, p := range s.players {
-		time.Sleep(200 * time.Millisecond)
-		s.conn.WriteToUDP(data, p.Addr)
-	}
-}
-
-func (s *Server) playerIDFromAddr(addr *net.UDPAddr) common.PlayerID {
-	for id, p := range s.players {
-		if p.Addr.String() == addr.String() {
-			return id
+		if !p.Spawned {
+			continue
 		}
+		packet := make([]byte, len(state))
+		copy(packet, state)
+		addr := p.Addr
+		go s.delayedSend(packet, addr)
 	}
-	return 0
 }

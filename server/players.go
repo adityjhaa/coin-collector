@@ -2,70 +2,115 @@ package server
 
 import (
 	"coin-collector/common"
+	"math"
+	"math/rand"
 	"net"
-	"sync/atomic"
 )
 
-var nextPlayerID uint32 = 1
+const playerHalfSize = 13
 
 func (s *Server) AddPlayer(addr *net.UDPAddr) common.PlayerID {
-	id := common.PlayerID(atomic.AddUint32(&nextPlayerID, 1))
+	s.lock.Lock()
+	defer s.lock.Unlock()
 
-	s.players[id] = &common.Player{
+	id := s.nextPlayerID
+	s.nextPlayerID++
+
+	x := float32(rand.Intn(760) + 20)
+	y := float32(rand.Intn(560) + 20)
+
+	p := &common.Player{
 		ID:        id,
-		X:         0,
-		Y:         0,
+		X:         x,
+		Y:         y,
 		Score:     0,
 		Addr:      addr,
 		LastInput: 0,
+		LastHeard: NowMs(),
+		Spawned:   true,
 	}
-
+	s.players[id] = p
 	return id
 }
 
-func (s *Server) SetPlayerSpawn(id common.PlayerID, x, y float32) {
-	if p, ok := s.players[id]; ok {
-		p.X = float64(x)
-		p.Y = float64(y)
-	}
-}
+func (s *Server) applyPlayerInputs() {
+	s.lock.Lock()
+	defer s.lock.Unlock()
 
-func (s *Server) RemovePlayer(id common.PlayerID) {
-	delete(s.players, id)
-}
-
-func (s *Server) ApplyPlayerInputs() {
 	for _, p := range s.players {
-		if p.LastInput == 0 {
+		if !p.Spawned {
+			continue
+		}
+		m := p.LastInput
+		if m == 0 {
 			continue
 		}
 
-		// bitmask: W=1, A=2, S=4, D=8
-		if p.LastInput&1 != 0 { // W
-			p.Y -= common.MoveSpeed
+		dx, dy := 0.0, 0.0
+
+		if m&1 != 0 { // W
+			dy -= 1
 		}
-		if p.LastInput&2 != 0 { // A
-			p.X -= common.MoveSpeed
+		if m&2 != 0 { // A
+			dx -= 1
 		}
-		if p.LastInput&4 != 0 { // S
-			p.Y += common.MoveSpeed
+		if m&4 != 0 { // S
+			dy += 1
 		}
-		if p.LastInput&8 != 0 { // D
-			p.X += common.MoveSpeed
+		if m&8 != 0 { // D
+			dx += 1
 		}
 
-		// clamp to screen for safety
-		if p.X < 0 {
-			p.X = 0
+		if dx != 0 || dy != 0 {
+			length := math.Hypot(dx, dy)
+			dx /= length
+			dy /= length
+
+			p.X += float32(dx * common.MoveSpeed)
+			p.Y += float32(dy * common.MoveSpeed)
 		}
-		if p.Y < 0 {
-			p.Y = 0
+
+		if p.X < playerHalfSize {
+			p.X = playerHalfSize
 		}
-		if p.X > 800 {
-			p.X = 800
+		if p.Y < playerHalfSize {
+			p.Y = playerHalfSize
 		}
-		if p.Y > 600 {
-			p.Y = 600
+		if p.X > 800-playerHalfSize {
+			p.X = 800 - playerHalfSize
+		}
+		if p.Y > 600-playerHalfSize {
+			p.Y = 600 - playerHalfSize
+		}
+	}
+}
+
+func (s *Server) resolvePlayerCollisions() {
+	s.lock.Lock()
+	defer s.lock.Unlock()
+
+	const minDist = 26.0
+
+	for _, p1 := range s.players {
+		for _, p2 := range s.players {
+			if p1.ID >= p2.ID {
+				continue
+			}
+
+			dx := float64(p2.X - p1.X)
+			dy := float64(p2.Y - p1.Y)
+			dist := math.Hypot(dx, dy)
+
+			if dist < minDist && dist > 0 {
+				overlap := minDist - dist
+				nx := dx / dist
+				ny := dy / dist
+
+				p1.X -= float32(nx * overlap / 2)
+				p1.Y -= float32(ny * overlap / 2)
+				p2.X += float32(nx * overlap / 2)
+				p2.Y += float32(ny * overlap / 2)
+			}
 		}
 	}
 }

@@ -2,72 +2,80 @@ package client
 
 import (
 	"encoding/binary"
-	"coin-collector/common"
+	"math"
 	"time"
+
+	"coin-collector/common"
 )
 
 type PlayerSnapshot struct {
 	ID    common.PlayerID
 	X, Y  float32
-	Score int
+	Score uint16
 }
 
 type WorldSnapshot struct {
 	Players   []PlayerSnapshot
 	Coins     []common.Coin
-	Timestamp int64 // capture time for interpolation
+	Timestamp int64
+}
+
+func NowMs() int64 {
+	return time.Now().UnixNano() / int64(time.Millisecond)
 }
 
 func ParseWorldState(data []byte) WorldSnapshot {
-	offset := 1 // skip msgType
+	offset := 1
 
-	// --- players ---
+	if len(data) < offset+2 {
+		return WorldSnapshot{Timestamp: NowMs()}
+	}
 	numPlayers := int(binary.LittleEndian.Uint16(data[offset:]))
 	offset += 2
 
 	players := make([]PlayerSnapshot, 0, numPlayers)
-
 	for i := 0; i < numPlayers; i++ {
+		if len(data) < offset+2+4+4+2 {
+			break
+		}
 		id := common.PlayerID(binary.LittleEndian.Uint16(data[offset:]))
 		offset += 2
-
-		x := binary.LittleEndian.Uint32(data[offset:])
+		xbits := binary.LittleEndian.Uint32(data[offset:])
 		offset += 4
-
-		y := binary.LittleEndian.Uint32(data[offset:])
+		ybits := binary.LittleEndian.Uint32(data[offset:])
 		offset += 4
-
 		score := binary.LittleEndian.Uint16(data[offset:])
 		offset += 2
 
 		players = append(players, PlayerSnapshot{
 			ID:    id,
-			X:     float32(x),
-			Y:     float32(y),
-			Score: int(score),
+			X:     math.Float32frombits(xbits),
+			Y:     math.Float32frombits(ybits),
+			Score: score,
 		})
 	}
 
-	// --- coins ---
+	if len(data) < offset+2 {
+		return WorldSnapshot{Players: players, Coins: nil, Timestamp: NowMs()}
+	}
 	numCoins := int(binary.LittleEndian.Uint16(data[offset:]))
 	offset += 2
 
 	coins := make([]common.Coin, 0, numCoins)
-
 	for i := 0; i < numCoins; i++ {
+		if len(data) < offset+2+4+4 {
+			break
+		}
 		cid := int(binary.LittleEndian.Uint16(data[offset:]))
 		offset += 2
-
-		x := binary.LittleEndian.Uint32(data[offset:])
+		xbits := binary.LittleEndian.Uint32(data[offset:])
 		offset += 4
-
-		y := binary.LittleEndian.Uint32(data[offset:])
+		ybits := binary.LittleEndian.Uint32(data[offset:])
 		offset += 4
-
 		coins = append(coins, common.Coin{
 			ID: cid,
-			X:  float64(float32(x)),
-			Y:  float64(float32(y)),
+			X:  math.Float32frombits(xbits),
+			Y:  math.Float32frombits(ybits),
 		})
 	}
 
@@ -76,8 +84,4 @@ func ParseWorldState(data []byte) WorldSnapshot {
 		Coins:     coins,
 		Timestamp: NowMs(),
 	}
-}
-
-func NowMs() int64 {
-	return int64(float64(time.Now().UnixNano()) / 1e6)
 }

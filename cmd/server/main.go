@@ -1,22 +1,21 @@
 package main
 
 import (
-	"coin-collector/server"
 	"log"
+
+	"coin-collector/server"
 )
 
 func main() {
 	log.Println("=== Coin Collector Server Starting ===")
 
 	s := server.NewServer()
-
 	if err := s.StartNetwork(); err != nil {
-		log.Fatal("Failed to start network:", err)
+		log.Fatal("network start:", err)
 	}
 
 	go s.StartGameLoop()
 
-	log.Println("Server initialized. Awaiting clients...")
-
+	log.Println("server running; waiting for clients...")
 	select {}
 }
