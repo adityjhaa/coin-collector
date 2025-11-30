@@ -7,7 +7,7 @@ _Authoritative Server • Interpolation • Lag Simulation • Smooth Gameplay_
 ## 🎮 Overview
 
 **Coin Collector** is a multiplayer 2D game built using **Go**, **Ebiten**, and **UDP networking**.  
-Two players join a server, move around a shared arena, collect coins, and score points — all under strict **server authority**, simulated **network latency**, and smooth **interpolation-based rendering**.
+Players join a server, move around a shared arena, collect coins, and score points — all under strict **server authority**, simulated **network latency**, and smooth **interpolation-based rendering**.
 
 ---
 
@@ -59,6 +59,8 @@ go run cmd/server/main.go
 ```bash
 go run cmd/client/main.go
 ```
+
+---
 
 ## 🧠 Technical Highlights
 
