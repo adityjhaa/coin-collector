@@ -7,9 +7,9 @@ const (
 	TickDelayMs = 1000 / TickRate
 
 	MoveSpeed    = 200.0 / TickRate
-	PickupRadius = 25.0
+	PickupRadius = 24.0
 
-	CoinSpawnIntervalSec = 8
+	CoinSpawnIntervalSec = 7
 	MaxCoins             = 10
 
 	SimulatedLatencyMs = 200
